@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seguimiento de Ubicaciones</title>
+
+    <!-- Leaflet -->
+    <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Supabase -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 20px;
+        }
+
+        .header h1 {
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+
+        .stat-card {
+            background: rgba(255,255,255,0.2);
+            padding: 10px 15px;
+            border-radius: 10px;
+            min-width: 120px;
+        }
+
+        .number {
+            font-size: 20px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        .container {
+            display: flex;
+            height: calc(100vh - 180px);
+        }
+
+        .sidebar {
+            width: 350px;
+            background: white;
+            overflow-y: auto;
+            padding: 15px;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+
+        .map-container {
+            flex: 1;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        .refresh-btn {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            background: #667eea;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 15px;
+        }
+
+        .refresh-btn:hover {
+            background: #5568d8;
+        }
+
+        .location-item {
+            background: #f8f9fa;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .location-item:hover {
+            transform: translateX(4px);
+            background: #e9ecef;
+        }
+
+        .user {
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .accuracy {
+            color: green;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .time {
+            color: gray;
+            font-size: 11px;
+            margin-top: 5px;
+        }
+
+        .info {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 12px;
+            color: #1976d2;
+        }
+
+        @media(max-width: 768px) {
+
+            .container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: 300px;
+            }
+
+            .map-container {
+                height: 100%;
+            }
+        }
+
+        @keyframes pulse {
+
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(2);
+                opacity: 0;
+            }
+        }
+
+        @keyframes slideIn {
+
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="header">
+
+        <h1>Seguimiento de Ubicaciones</h1>
+
+        <p>Mapa en tiempo real conectado a Supabase</p>
+
+        <div class="stats">
+
+            <div class="stat-card">
+                <div>Total Ubicaciones</div>
+                <div class="number" id="totalCount">0</div>
+            </div>
+
+            <div class="stat-card">
+                <div>Última Actualización</div>
+                <div class="number" id="lastUpdate"
+                    style="font-size:15px;">
+                    --:--
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div>Usuarios</div>
+                <div class="number" id="userCount">0</div>
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="container">
+
+        <div class="sidebar">
+
+            <button class="refresh-btn"
+                onclick="cargarUbicaciones()">
+
+                🔄 Actualizar
+
+            </button>
+
+            <h3>📋 Historial</h3>
+
+            <div id="locationsList">
+                Cargando...
+            </div>
+
+            <div class="info">
+                💡 Haz click en una ubicación para centrar el mapa.
+            </div>
+
+        </div>
+
+        <div class="map-container">
+            <div id="map"></div>
+        </div>
+
+    </div>
+
+    <script>
+
+        // =====================================
+        // CONFIGURACIÓN SUPABASE (CORREGIDO)
+        // =====================================
+
+        const SUPABASE_URL = 'https://tqsdzqhrchbtyscrjgka.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxc2R6cWhyY2hidHlzY3JqZ2thIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NzM2MDgsImV4cCI6MjA5NTA0OTYwOH0.KTze3AstMRKq7uBvQvPVClHTVkQWMaYpBjaJQSl05aQ';
+
+        // Crear el cliente ANTES de usarlo
+        const supabaseClient = window.supabase.createClient(
+            SUPABASE_URL,
+            SUPABASE_ANON_KEY
+        );
+
+        // =====================================
+        // VARIABLES
+        // =====================================
+
+        let map;
+        let markers = [];
+
+        // =====================================
+        // INICIALIZAR MAPA
+        // =====================================
+
+        function initMap() {
+
+            map = L.map('map').setView(
+                [-16.4897, -68.1193],
+                14
+            );
+
+            L.tileLayer(
+                'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                {
+                    attribution: '© OpenStreetMap'
+                }
+            ).addTo(map);
+        }
+
+        // =====================================
+        // FORMATEAR FECHA
+        // =====================================
+
+        function formatDate(timestamp) {
+
+            if (!timestamp) {
+                return 'No disponible';
+            }
+
+            return new Date(timestamp)
+                .toLocaleString('es-ES');
+        }
+
+        // =====================================
+        // TIEMPO RELATIVO
+        // =====================================
+
+        function formatRelativeTime(timestamp) {
+
+            if (!timestamp) {
+                return 'No disponible';
+            }
+
+            const diff =
+                Date.now() -
+                new Date(timestamp).getTime();
+
+            const minutes =
+                Math.floor(diff / 60000);
+
+            const seconds =
+                Math.floor(
+                    (diff % 60000) / 1000
+                );
+
+            if (minutes < 1) {
+                return `hace ${seconds} segundos`;
+            }
+
+            if (minutes < 60) {
+                return `hace ${minutes} minutos`;
+            }
+
+            return formatDate(timestamp);
+        }
+
+        // =====================================
+        // COLOR PRECISIÓN
+        // =====================================
+
+        function getAccuracyColor(accuracy) {
+
+            accuracy = Number(accuracy);
+
+            if (accuracy < 15) {
+                return '#28a745';
+            }
+
+            if (accuracy < 30) {
+                return '#ffc107';
+            }
+
+            return '#dc3545';
+        }
+
+        // =====================================
+        // ACTUALIZAR MAPA
+        // =====================================
+
+        function updateMap(locations) {
+
+            // Eliminar marcadores viejos
+            markers.forEach(marker => {
+                map.removeLayer(marker);
+            });
+
+            markers = [];
+
+            if (!locations.length) {
+                return;
+            }
+
+            const colors = [
+                '#667eea',
+                '#28a745',
+                '#dc3545',
+                '#ff9800',
+                '#9c27b0'
+            ];
+
+            const userColors = {};
+
+            let colorIndex = 0;
+
+            locations.forEach(location => {
+
+                const lat =
+                    parseFloat(location.latitude);
+
+                const lng =
+                    parseFloat(location.longitude);
+
+                if (isNaN(lat) || isNaN(lng)) {
+                    return;
+                }
+
+                // Color por usuario
+                if (!userColors[location.user_id]) {
+
+                    userColors[location.user_id] =
+                        colors[colorIndex % colors.length];
+
+                    colorIndex++;
+                }
+
+                const userColor =
+                    userColors[location.user_id];
+
+                const accuracyColor =
+                    getAccuracyColor(location.accuracy);
+
+                const icon = L.divIcon({
+
+                    className: '',
+
+                    html: `
+                        <div style="
+                            width:16px;
+                            height:16px;
+                            border-radius:50%;
+                            background:${userColor};
+                            border:3px solid white;
+                            box-shadow:0 0 5px rgba(0,0,0,0.4);
+                            position:relative;
+                        ">
+
+                            <div style="
+                                width:6px;
+                                height:6px;
+                                border-radius:50%;
+                                background:${accuracyColor};
+                                position:absolute;
+                                bottom:-2px;
+                                right:-2px;
+                            "></div>
+
+                        </div>
+                    `,
+
+                    iconSize: [20, 20]
+                });
+
+                const marker = L.marker(
+                    [lat, lng],
+                    { icon }
+                )
+
+                .addTo(map)
+
+                .bindPopup(`
+
+                    <b>👤 Usuario:</b>
+                    ${location.user_id}<br>
+
+                    <b>📍 Latitud:</b>
+                    ${lat.toFixed(6)}<br>
+
+                    <b>📍 Longitud:</b>
+                    ${lng.toFixed(6)}<br>
+
+                    <b>🎯 Precisión:</b>
+                    ${
+                        location.accuracy
+                        ? Number(location.accuracy)
+                            .toFixed(2)
+                        : 'N/A'
+                    } m<br>
+
+                    <b>🕒 Hora:</b>
+                    ${formatDate(location.timestamp)}
+
+                `);
+
+                markers.push(marker);
+            });
+
+            // Ajustar vista
+            if (locations.length === 1) {
+
+                map.setView([
+                    parseFloat(locations[0].latitude),
+                    parseFloat(locations[0].longitude)
+                ], 15);
+
+            } else {
+
+                const bounds = L.latLngBounds(
+
+                    locations.map(loc => [
+
+                        parseFloat(loc.latitude),
+                        parseFloat(loc.longitude)
+
+                    ])
+                );
+
+                map.fitBounds(bounds);
+            }
+        }
+
+        // =====================================
+        // CENTRAR UBICACIÓN
+        // =====================================
+
+        window.centrarEnUbicacion =
+            function(lat, lng) {
+
+            map.setView([lat, lng], 17);
+
+            const pulseIcon = L.divIcon({
+
+                className: '',
+
+                html: `
+                    <div style="
+                        width:20px;
+                        height:20px;
+                        background:red;
+                        border-radius:50%;
+                        animation:pulse 1s infinite;
+                    "></div>
+                `,
+
+                iconSize: [20, 20]
+            });
+
+            const tempMarker = L.marker(
+                [lat, lng],
+                { icon: pulseIcon }
+            ).addTo(map);
+
+            setTimeout(() => {
+
+                map.removeLayer(tempMarker);
+
+            }, 2000);
+        };
+
+        // =====================================
+        // CARGAR UBICACIONES
+        // =====================================
+
+        async function cargarUbicaciones() {
+
+            try {
+
+                const { data, error } =
+                    await supabaseClient
+
+                    .from('ubicaciones')
+
+                    .select('*')
+
+                    .order(
+                        'timestamp',
+                        { ascending: false }
+                    );
+
+                if (error) {
+                    throw error;
+                }
+
+                const locations = data || [];
+
+                // =========================
+                // ESTADÍSTICAS
+                // =========================
+
+                document.getElementById(
+                    'totalCount'
+                ).innerText = locations.length;
+
+                document.getElementById(
+                    'lastUpdate'
+                ).innerText =
+                    new Date()
+                    .toLocaleTimeString('es-ES');
+
+                const uniqueUsers = [
+
+                    ...new Set(
+                        locations.map(
+                            loc => loc.user_id
+                        )
+                    )
+                ];
+
+                document.getElementById(
+                    'userCount'
+                ).innerText =
+                    uniqueUsers.length;
+
+                // =========================
+                // LISTA
+                // =========================
+
+                const list =
+                    document.getElementById(
+                        'locationsList'
+                    );
+
+                if (!locations.length) {
+
+                    list.innerHTML = `
+                        <div style="
+                            padding:20px;
+                            text-align:center;
+                            color:gray;
+                        ">
+                            No hay ubicaciones
+                        </div>
+                    `;
+
+                } else {
+
+                    list.innerHTML =
+                        locations.map(location => {
+
+                            const lat =
+                                parseFloat(
+                                    location.latitude
+                                );
+
+                            const lng =
+                                parseFloat(
+                                    location.longitude
+                                );
+
+                            return `
+
+                                <div class="location-item"
+
+                                    onclick="
+                                        centrarEnUbicacion(
+                                            ${lat},
+                                            ${lng}
+                                        )
+                                    ">
+
+                                    <div class="user">
+                                        👤 ${location.user_id}
+                                    </div>
+
+                                    <div class="coords">
+                                        ${lat.toFixed(6)},
+                                        ${lng.toFixed(6)}
+                                    </div>
+
+                                    <div class="accuracy">
+
+                                        🎯 Precisión:
+
+                                        ${
+                                            location.accuracy
+                                            ? Number(
+                                                location.accuracy
+                                            ).toFixed(2)
+                                            : 'N/A'
+                                        } m
+
+                                    </div>
+
+                                    <div class="time">
+
+                                        🕒
+                                        ${formatRelativeTime(
+                                            location.timestamp
+                                        )}
+
+                                    </div>
+
+                                </div>
+
+                            `;
+                        }).join('');
+                }
+
+                updateMap(locations);
+
+                console.log(
+                    '✅ Ubicaciones cargadas'
+                );
+
+            } catch(error) {
+
+                console.error(error);
+
+                document.getElementById(
+                    'locationsList'
+                ).innerHTML = `
+
+                    <div style="
+                        color:red;
+                        padding:20px;
+                        text-align:center;
+                    ">
+
+                        ❌ ${error.message}
+
+                    </div>
+
+                `;
+            }
+        }
+
+        // =====================================
+        // NOTIFICACIÓN
+        // =====================================
+
+        function mostrarNotificacion(texto) {
+
+            const notif =
+                document.createElement('div');
+
+            notif.style.cssText = `
+                position:fixed;
+                top:20px;
+                right:20px;
+                background:#28a745;
+                color:white;
+                padding:12px 20px;
+                border-radius:8px;
+                z-index:9999;
+                animation:slideIn .3s ease;
+            `;
+
+            notif.innerText = texto;
+
+            document.body.appendChild(notif);
+
+            setTimeout(() => {
+
+                notif.remove();
+
+            }, 3000);
+        }
+
+        // =====================================
+        // REALTIME
+        // =====================================
+
+        function suscribirCambios() {
+
+            supabaseClient
+
+                .channel('ubicaciones_channel')
+
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'ubicaciones'
+                    },
+
+                    payload => {
+
+                        console.log(
+                            '📡 Cambio detectado',
+                            payload
+                        );
+
+                        cargarUbicaciones();
+
+                        mostrarNotificacion(
+                            '📍 Nueva ubicación'
+                        );
+                    }
+                )
+
+                .subscribe();
+
+            console.log(
+                '✅ Realtime activado'
+            );
+        }
+
+        // =====================================
+        // INICIAR
+        // =====================================
+
+        window.onload = () => {
+
+            initMap();
+
+            cargarUbicaciones();
+
+            suscribirCambios();
+        };
+
+    </script>
+
+</body>
+
+</html>
